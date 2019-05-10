@@ -11,7 +11,7 @@ from PIL import Image
 import numpy as np
 from keras import backend as K
 
-run = wandb.init(project='catz')
+run = wandb.init(project='catz-may10', entity='qualcomm')
 config = run.config
 
 config.num_epochs = 2
