@@ -1,4 +1,5 @@
-from keras.layers import Conv2D, UpSampling2D, MaxPooling2D, Input,Permute,Reshape,ConvLSTM2D,Add
+from keras.layers import Conv2D, UpSampling2D, MaxPooling2D, Input,Permute,Reshape,ConvLSTM2D,Add,GaussianNoise,BatchNormalization,Multiply
+from keras.layers.core import Lambda
 from keras.models import Sequential, Model
 from keras.callbacks import Callback
 import random
@@ -61,39 +62,35 @@ def my_generator(batch_size, img_dir):
         yield (input_images, output_images)
         counter += batch_size
 
-
-#model = Sequential()
-#model.add(Conv2D(32, (3, 3), activation='relu', padding='same',
-#                 input_shape=(config.height, config.width, 5 * 3)))
-#model.add(MaxPooling2D(2, 2))
-#model.add(Conv2D(32, (3, 3), activation='relu', padding='same'))
-#model.add(UpSampling2D((2, 2)))
-#model.add(Conv2D(3, (3, 3), activation='relu', padding='same'))
-
 def get_last_img(img):
-    return img[:,:,:,4,:]
+    return img[:,4,:,:,:]
+
+def get_diff(img):
+    return img[:,1:,:,:,:] - img[:,:4,:,:,:]
 
 inp = Input(shape=(config.height,config.width,5*3))
 reshape = Reshape((96,96,5,3))(inp)
-perm = Permute((3,1,2,4))(reshape)
+perm = Permute((3,1,2,4))(reshape) # 5 96 96 3
 
-last_img = get_last_img(reshape)
+last_img = Lambda(get_last_img)(perm)
+diff_img = Lambda(get_diff)(perm)
 
-#convlstm_1 = ConvLSTM2D(32,(2,2),activation='relu',padding='same',data_format='channels_last',return_sequences=True)(perm)
-convlstm_1 = ConvLSTM2D(32,(2,2),activation='relu',padding='same',data_format='channels_last',return_sequences=False)(perm)
-#conv2d_1 = Conv2D(32,(3,3),activation='relu',padding='same')(inp)
-#maxpool_1 = MaxPooling2D(2,2)(convlstm_1)
-#convlstm_2 = ConvLSTM2D(64,(3,3),activation='relu',padding='same',data_format='channels_last')(convlstm_1)
-maxpool_2 = MaxPooling2D(2,2)(convlstm_1)
+gauss_noise_1 = GaussianNoise(15)(diff_img)
+convlstm_1 = ConvLSTM2D(32,(2,2),activation='relu',padding='same',data_format='channels_last',return_sequences=True)(gauss_noise_1)
+convlstm_2 = ConvLSTM2D(16,(2,2),activation='relu',padding='same',data_format='channels_last',return_sequences=False)(convlstm_1)
 
-conv2d_3 = Conv2D(32,(3,3),activation='relu',padding='same')(maxpool_2)
-upsamp_2 = UpSampling2D((2,2))(conv2d_3)
+conv2d_1 = Conv2D(3,(3,3),activation='relu',padding='same')(convlstm_2)
 
-conv2d_last = Conv2D(3,(3,3),activation='relu',padding='same')(upsamp_2)
+maxpool_1 = MaxPooling2D(2,2)(convlstm_2)
 
-add_final = Add()([last_img, conv2d_last])
+conv2d_2 = Conv2D(64,(2,2),activation='relu',padding='same')(maxpool_1)
+upsamp_2 = UpSampling2D((2,2))(conv2d_2)
 
-model = Model(inp,conv2d_last)
+conv2d_3 = Conv2D(3,(3,3),activation='relu',padding='same')(upsamp_2)
+
+add_final = Add()([last_img,conv2d_3,conv2d_1])
+
+model = Model(inp,add_final)
 
 def perceptual_distance(y_true, y_pred):
     rmean = (y_true[:, :, :, 0] + y_pred[:, :, :, 0]) / 2
