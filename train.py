@@ -1,4 +1,4 @@
-from keras.layers import Conv2D, UpSampling2D, MaxPooling2D, Input,Permute,Reshape,ConvLSTM2D,Add,GaussianNoise,BatchNormalization,Multiply
+from keras.layers import Conv2D, UpSampling2D, MaxPooling2D, Input,Permute,Reshape,ConvLSTM2D,Concatenate,GaussianNoise,BatchNormalization
 from keras.layers.core import Lambda
 from keras.models import Sequential, Model
 from keras.callbacks import Callback
@@ -72,25 +72,25 @@ inp = Input(shape=(config.height,config.width,5*3))
 reshape = Reshape((96,96,5,3))(inp)
 perm = Permute((3,1,2,4))(reshape) # 5 96 96 3
 
+
+
 last_img = Lambda(get_last_img)(perm)
 diff_img = Lambda(get_diff)(perm)
 
-gauss_noise_1 = GaussianNoise(15)(diff_img)
-convlstm_1 = ConvLSTM2D(32,(2,2),activation='relu',padding='same',data_format='channels_last',return_sequences=True)(gauss_noise_1)
-convlstm_2 = ConvLSTM2D(16,(2,2),activation='relu',padding='same',data_format='channels_last',return_sequences=False)(convlstm_1)
+gauss_noise_1 = GaussianNoise(1)(diff_img)
+convlstm_1 = ConvLSTM2D(64,(3,3),activation='relu',padding='same',data_format='channels_last')(gauss_noise_1)
+batchnorm_1 = BatchNormalization()(convlstm_1)
 
-conv2d_1 = Conv2D(3,(3,3),activation='relu',padding='same')(convlstm_2)
+conv2d_1 = Conv2D(64,(3,3),activation='relu',padding='same')(batchnorm_1)
+conv2d_2 = Conv2D(32,(3,3),activation='relu',padding='same')(conv2d_1)
+conv2d_3 = Conv2D(16,(3,3),activation='relu',padding='same')(conv2d_2)
 
-maxpool_1 = MaxPooling2D(2,2)(convlstm_2)
 
-conv2d_2 = Conv2D(64,(2,2),activation='relu',padding='same')(maxpool_1)
-upsamp_2 = UpSampling2D((2,2))(conv2d_2)
+concat_1 = Concatenate()([last_img, conv2d_3])
 
-conv2d_3 = Conv2D(3,(3,3),activation='relu',padding='same')(upsamp_2)
+conv2d_4 = Conv2D(3,(2,2),activation='relu',padding='same')(concat_1)
 
-add_final = Add()([last_img,conv2d_3,conv2d_1])
-
-model = Model(inp,add_final)
+model = Model(inp,conv2d_4)
 
 def perceptual_distance(y_true, y_pred):
     rmean = (y_true[:, :, :, 0] + y_pred[:, :, :, 0]) / 2
@@ -101,7 +101,7 @@ def perceptual_distance(y_true, y_pred):
     return K.mean(K.sqrt((((512+rmean)*r*r)/256) + 4*g*g + (((767-rmean)*b*b)/256)))
 
 
-model.compile(optimizer='adam', loss='mae', metrics=[perceptual_distance])
+model.compile(optimizer='adam', loss='mean_squared_error', metrics=[perceptual_distance])
 model.summary()
 model.fit_generator(my_generator(config.batch_size, train_dir),
                     steps_per_epoch=len(
